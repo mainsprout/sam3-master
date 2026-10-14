@@ -50,13 +50,28 @@ def iou_distance_matrix(gt_boxes, pred_boxes):
     return matrix
 
 
-def evaluate(gt_file: Path, result_file: Path, iou_threshold: float):
+def evaluate(
+    gt_file: Path,
+    result_file: Path,
+    iou_threshold: float,
+    min_frame: int | None = None,
+    max_frame: int | None = None,
+):
     # motmetrics uses frame-wise assignments to calculate CLEAR MOT and ID metrics.
     gt = read_mot_file(gt_file, ground_truth=True)
     pred = read_mot_file(result_file, ground_truth=False)
     accumulator = mm.MOTAccumulator(auto_id=False)
 
-    for frame in sorted(set(gt) | set(pred)):
+    frames = sorted(set(gt) | set(pred))
+    if min_frame is not None:
+        frames = [frame for frame in frames if frame >= min_frame]
+    if max_frame is not None:
+        frames = [frame for frame in frames if frame <= max_frame]
+
+    if not frames:
+        raise ValueError("No frames remain in the requested evaluation range")
+
+    for frame in frames:
         gt_ids = list(gt.get(frame, {}))
         pred_ids = list(pred.get(frame, {}))
         distances = iou_distance_matrix(
@@ -65,7 +80,8 @@ def evaluate(gt_file: Path, result_file: Path, iou_threshold: float):
         )
         # Distances above 1-IoU threshold are treated as no match.
         distances[distances > 1.0 - iou_threshold] = float("nan")
-        accumulator.update(gt_ids, pred_ids, distances)
+        # auto_id=False이므로 MOT17의 실제 프레임 번호를 명시한다.
+        accumulator.update(gt_ids, pred_ids, distances, frameid=frame)
 
     metrics = [
         "num_frames", "num_objects", "num_predictions", "num_matches",
@@ -81,5 +97,13 @@ if __name__ == "__main__":
     parser.add_argument("--gt", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--iou-threshold", type=float, default=0.5)
+    parser.add_argument("--min-frame", type=int, default=None)
+    parser.add_argument("--max-frame", type=int, default=None)
     args = parser.parse_args()
-    evaluate(args.gt, args.result, args.iou_threshold)
+    evaluate(
+        args.gt,
+        args.result,
+        args.iou_threshold,
+        args.min_frame,
+        args.max_frame,
+    )
